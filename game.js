@@ -4,16 +4,19 @@ class CoinDash extends Phaser.Scene {
 
   create() {
     const c = COIN_DASH;
-    this.score = 0;
     this.finished = false;
     this.deadline = this.time.now + c.roundSeconds * 1000;
     this.physics.world.setBounds(0, 44, c.width, c.height - 44);
     this.add.grid(c.width / 2, c.height / 2, c.width, c.height, 40, 40,
       c.colors.background, 1, 0x24334b, 0.45);
     this.hud = this.add.text(18, 12, '', { font: '18px monospace', color: '#ffffff' });
-    this.player = this.add.rectangle(c.width / 2, c.height / 2, 24, 24, c.colors.player);
-    this.physics.add.existing(this.player);
-    this.player.body.setCollideWorldBounds(true);
+    // Player 1 uses WASD, Player 2 the arrow keys; they start either side of centre.
+    const cursors = this.input.keyboard.createCursorKeys();
+    const wasd = this.input.keyboard.addKeys({ up: 'W', left: 'A', down: 'S', right: 'D' });
+    this.players = [
+      this.makePlayer('Player 1', c.width / 2 - 120, c.colors.player, wasd),
+      this.makePlayer('Player 2', c.width / 2 + 120, c.colors.player2, cursors)
+    ];
     this.coin = this.add.circle(100, 100, 9, c.colors.coin);
     this.physics.add.existing(this.coin);
     this.coin.body.setCircle(9);
@@ -26,50 +29,84 @@ class CoinDash extends Phaser.Scene {
       const angle = (35 + i * 105) * Math.PI / 180;
       drone.body.setVelocity(Math.cos(angle) * c.droneSpeed, Math.sin(angle) * c.droneSpeed);
     }
-    this.physics.add.overlap(this.player, this.coin, () => {
-      if (this.finished) return;
-      this.score++;
-      this.placeCoin();
-    });
-    this.physics.add.overlap(this.player, this.drones, () => this.finish('A drone caught you!'));
-    this.cursors = this.input.keyboard.createCursorKeys();
-    this.keys = this.input.keyboard.addKeys('W,A,S,D,R');
+    for (const p of this.players) {
+      this.physics.add.overlap(p, this.coin, () => {
+        if (this.finished) return;
+        p.score++;
+        this.placeCoin();
+      });
+      this.physics.add.overlap(p, this.drones, () => this.finish(p));
+    }
+    const [p1, p2] = this.players;
+    this.physics.add.collider(p1, p2, () => this.shove(p1, p2));
+    this.input.keyboard.addKey('R');
     this.input.keyboard.on('keydown-R', () => this.scene.restart());
+  }
+
+  makePlayer(name, x, color, keys) {
+    const p = this.add.rectangle(x, COIN_DASH.height / 2, 24, 24, color);
+    this.physics.add.existing(p);
+    p.body.setCollideWorldBounds(true);
+    Object.assign(p, { name, keys, score: 0, stunnedUntil: 0, move: new Phaser.Math.Vector2() });
+    return p;
+  }
+
+  shove(a, b) {
+    // Whoever is steering harder into the other is the pusher; the other is knocked back.
+    const dir = new Phaser.Math.Vector2(b.x - a.x, b.y - a.y).normalize();
+    const aPush = a.move.dot(dir), bPush = -b.move.dot(dir);
+    if (Math.max(aPush, bPush) <= 0 || aPush === bPush) return;
+    const [victim, away] = aPush > bPush ? [b, dir] : [a, dir.negate()];
+    if (victim.stunnedUntil > this.time.now) return;
+    victim.stunnedUntil = this.time.now + COIN_DASH.pushMs;
+    victim.body.setVelocity(away.x * COIN_DASH.pushSpeed, away.y * COIN_DASH.pushSpeed);
   }
 
   placeCoin() {
     const c = COIN_DASH;
-    // Avoid spawning the next coin directly underneath the player.
+    // Avoid spawning the next coin directly underneath either player.
     let x, y;
     do {
       x = Phaser.Math.Between(25, c.width - 25);
       y = Phaser.Math.Between(70, c.height - 25);
-    } while (Phaser.Math.Distance.Between(x, y, this.player.x, this.player.y) < 60);
+    } while (this.players.some(p => Phaser.Math.Distance.Between(x, y, p.x, p.y) < 60));
     this.coin.setPosition(x, y);
     this.coin.body.reset(x, y);
   }
 
   update() {
     if (this.finished) return;
-    const dx = Number(this.cursors.right.isDown || this.keys.D.isDown)
-      - Number(this.cursors.left.isDown || this.keys.A.isDown);
-    const dy = Number(this.cursors.down.isDown || this.keys.S.isDown)
-      - Number(this.cursors.up.isDown || this.keys.W.isDown);
-    const direction = new Phaser.Math.Vector2(dx, dy).normalize().scale(COIN_DASH.playerSpeed);
-    this.player.body.setVelocity(direction.x, direction.y);
+    for (const p of this.players) {
+      const k = p.keys;
+      p.move.set(Number(k.right.isDown) - Number(k.left.isDown),
+        Number(k.down.isDown) - Number(k.up.isDown)).normalize();
+      // A shoved player keeps their knockback velocity until the stun wears off.
+      if (p.stunnedUntil > this.time.now) continue;
+      p.body.setVelocity(p.move.x * COIN_DASH.playerSpeed, p.move.y * COIN_DASH.playerSpeed);
+    }
     const seconds = Math.max(0, Math.ceil((this.deadline - this.time.now) / 1000));
-    this.hud.setText(`Coins: ${this.score}                       Time: ${seconds}s`);
-    if (seconds === 0) this.finish('Time is up!');
+    const [p1, p2] = this.players;
+    this.hud.setText(`P1: ${p1.score}   P2: ${p2.score}               Time: ${seconds}s`);
+    if (seconds === 0) this.finish(null);
   }
 
-  finish(reason) {
+  finish(caught) {
     if (this.finished) return;
     this.finished = true;
     this.physics.pause();
     const c = COIN_DASH;
-    this.add.rectangle(c.width / 2, c.height / 2, 460, 150, 0x0a1120, 0.95);
+    const [p1, p2] = this.players;
+    // A caught player loses outright; on time-up the higher score wins.
+    let reason = 'Time is up!', result = 'It\'s a tie!';
+    if (caught) {
+      reason = `A drone caught ${caught.name}!`;
+      result = `${(caught === p1 ? p2 : p1).name} wins!`;
+    } else if (p1.score !== p2.score) {
+      result = `${(p1.score > p2.score ? p1 : p2).name} wins!`;
+    }
+    this.add.rectangle(c.width / 2, c.height / 2, 480, 210, 0x0a1120, 0.95);
     this.add.text(c.width / 2, c.height / 2,
-      `${reason}\n${this.score} coins collected\nPress R to try again`,
+      `${reason}\nP1: ${p1.score} coins   P2: ${p2.score} coins\n${result}\nPress R to play again`,
       { font: '24px monospace', color: '#ffffff', align: 'center', lineSpacing: 12 }
     ).setOrigin(0.5);
   }
