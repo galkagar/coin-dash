@@ -1,4 +1,15 @@
 /* global Phaser, COIN_DASH */
+// Features register here (see features/README.md). Each is an object with optional hooks:
+//   create(scene)                          after the base round is set up
+//   update(scene, time, delta)             every frame while the round is running
+//   coinPoints(scene, player, points)      return the points this coin is worth to player
+//   coinCollected(scene, player, points)   after player scored a coin
+//   playerHit(scene, player, source)       return false to cancel a knock-out (source: drone or 'hole')
+//   eventStarted(scene, type) / eventEnded(scene, type)   environment events, including your own
+//   finished(scene, result)                once; result is { reason, allOut, winner } (winner null on a tie)
+window.COIN_DASH_FEATURES = window.COIN_DASH_FEATURES || [];
+const features = () => window.COIN_DASH_FEATURES;
+
 class CoinDash extends Phaser.Scene {
   constructor() { super('CoinDash'); }
 
@@ -31,33 +42,40 @@ class CoinDash extends Phaser.Scene {
       drone.body.setVelocity(Math.cos(angle) * c.droneSpeed, Math.sin(angle) * c.droneSpeed);
     }
     for (const p of this.players) {
-      this.physics.add.overlap(p, this.coin, () => {
-        if (this.finished) return;
-        p.score++;
-        this.placeCoin();
-      });
-      this.physics.add.overlap(p, this.drones, () => this.knockOut(p));
+      this.physics.add.overlap(p, this.coin, () => this.collectCoin(p));
+      this.physics.add.overlap(p, this.drones, (player, drone) => this.knockOut(p, drone));
     }
     const [p1, p2] = this.players;
     this.physics.add.collider(p1, p2, () => this.shove(p1, p2));
     this.input.keyboard.addKey('R');
     this.input.keyboard.on('keydown-R', () => this.scene.restart());
+    features().forEach(f => f.create && f.create(this));
   }
 
   makePlayer(name, x, color, keys) {
     const p = this.add.rectangle(x, COIN_DASH.height / 2, 24, 24, color);
     this.physics.add.existing(p);
     p.body.setCollideWorldBounds(true);
-    Object.assign(p, { name, keys, score: 0, out: false, stunnedUntil: 0, floorCell: null,
-      move: new Phaser.Math.Vector2() });
+    Object.assign(p, { name, keys, score: 0, coins: 0, out: false, stunnedUntil: 0, floorCell: null,
+      speedScale: 1, move: new Phaser.Math.Vector2() });
     return p;
   }
 
   active() { return this.players.filter(p => !p.out); }
 
-  knockOut(p) {
+  collectCoin(p) {
+    if (this.finished || p.out) return;
+    const points = features().reduce((n, f) => (f.coinPoints ? f.coinPoints(this, p, n) : n), 1);
+    p.score += points;
+    p.coins++;
+    this.placeCoin();
+    features().forEach(f => f.coinCollected && f.coinCollected(this, p, points));
+  }
+
+  knockOut(p, source) {
     // A caught or fallen player keeps their coins but leaves play; the round goes on for the others.
     if (this.finished || p.out) return;
+    if (features().some(f => f.playerHit && f.playerHit(this, p, source) === false)) return;
     p.out = true;
     p.body.stop();
     p.body.enable = false;
@@ -80,6 +98,11 @@ class CoinDash extends Phaser.Scene {
   createEvents() {
     const c = COIN_DASH;
     this.event = null;
+    // Features may add their own event types: push to eventTypes, name the banner and HUD label,
+    // and react in eventStarted/eventEnded. Only one event runs at a time.
+    this.eventTypes = ['ice', 'collapse'];
+    this.eventBanners = { ice: 'ICE!', collapse: 'FLOOR COLLAPSING!' };
+    this.eventLabels = { ice: 'ICE', collapse: 'COLLAPSE' };
     this.holes = new Map(); // 'col,row' -> { rect, open }
     this.iceOverlay = this.add.rectangle(c.width / 2, (c.height + 44) / 2, c.width, c.height - 44,
       c.colors.ice, 0.22).setDepth(-1).setVisible(false);
@@ -93,8 +116,8 @@ class CoinDash extends Phaser.Scene {
 
   announceEvent() {
     if (this.finished) return;
-    const type = Phaser.Utils.Array.GetRandom(['ice', 'collapse']);
-    this.banner.setText(type === 'ice' ? 'ICE!' : 'FLOOR COLLAPSING!').setVisible(true);
+    const type = Phaser.Utils.Array.GetRandom(this.eventTypes);
+    this.banner.setText(this.eventBanners[type] || type.toUpperCase()).setVisible(true);
     this.time.delayedCall(COIN_DASH.events.warning, () => {
       this.banner.setVisible(false);
       this.startEvent(type);
@@ -107,6 +130,7 @@ class CoinDash extends Phaser.Scene {
     this.iceOverlay.setVisible(type === 'ice');
     for (const p of this.players) p.floorCell = null;
     this.time.delayedCall(COIN_DASH.events.duration, () => this.endEvent());
+    features().forEach(f => f.eventStarted && f.eventStarted(this, type));
   }
 
   endEvent() {
@@ -117,19 +141,21 @@ class CoinDash extends Phaser.Scene {
     this.iceOverlay.setVisible(false);
     for (const hole of this.holes.values()) { this.tweens.killTweensOf(hole.rect); hole.rect.destroy(); }
     this.holes.clear();
+    const type = this.event.type;
     this.event = null;
+    features().forEach(f => f.eventEnded && f.eventEnded(this, type));
     const e = COIN_DASH.events;
     this.time.delayedCall(Phaser.Math.Between(e.gapMin, e.gapMax), () => this.announceEvent());
   }
 
   // Normal control sets velocity directly; on ice input only accelerates and momentum carries on.
   steer(player) {
-    const c = COIN_DASH, direction = player.move;
+    const c = COIN_DASH, direction = player.move, k = player.speedScale;
     if (this.event && this.event.type === 'ice') {
-      player.body.setMaxVelocity(c.ice.maxSpeed).setDrag(c.ice.drag)
-        .setAcceleration(direction.x * c.ice.acceleration, direction.y * c.ice.acceleration);
+      player.body.setMaxVelocity(c.ice.maxSpeed * k).setDrag(c.ice.drag)
+        .setAcceleration(direction.x * c.ice.acceleration * k, direction.y * c.ice.acceleration * k);
     } else {
-      player.body.setVelocity(direction.x * c.playerSpeed, direction.y * c.playerSpeed);
+      player.body.setVelocity(direction.x * c.playerSpeed * k, direction.y * c.playerSpeed * k);
     }
   }
 
@@ -142,7 +168,7 @@ class CoinDash extends Phaser.Scene {
     if (!this.event || this.event.type !== 'collapse') return;
     const key = this.cellKey(player.x, player.y);
     const hole = this.holes.get(key);
-    if (hole && hole.open) return this.knockOut(player);
+    if (hole && hole.open) return this.knockOut(player, 'hole');
     if (player.floorCell && player.floorCell !== key) this.crackCell(player.floorCell);
     player.floorCell = key;
   }
@@ -183,7 +209,7 @@ class CoinDash extends Phaser.Scene {
     this.coin.body.reset(x, y);
   }
 
-  update() {
+  update(time, delta) {
     if (this.finished) return;
     for (const p of this.active()) {
       const k = p.keys;
@@ -195,12 +221,15 @@ class CoinDash extends Phaser.Scene {
     }
     if (this.finished) return;
     const seconds = Math.max(0, Math.ceil((this.deadline - this.time.now) / 1000));
+    this.secondsLeft = seconds;
     const [p1, p2] = this.players;
     const tag = p => `${p.score}${p.out ? ' (out)' : ''}`;
     this.hud.setText(`P1: ${tag(p1)}   P2: ${tag(p2)}`);
-    this.eventHud.setText((this.event ? `${this.event.type === 'ice' ? 'ICE' : 'COLLAPSE'} `
+    this.eventHud.setText((this.event ? `${this.eventLabels[this.event.type] || this.event.type.toUpperCase()} `
       + `${Math.max(0, Math.ceil((this.event.ends - this.time.now) / 1000))}s   ` : '')
       + `Time: ${seconds}s`);
+    features().forEach(f => f.update && f.update(this, time, delta));
+    if (this.finished) return;
     if (seconds === 0) this.finish(false);
   }
 
@@ -213,14 +242,14 @@ class CoinDash extends Phaser.Scene {
     // The round ends when every player is out or time runs out; the higher score wins.
     const reason = allOut ? 'Everyone is out!' : 'Time is up!';
     let result = 'It\'s a tie!';
-    if (p1.score !== p2.score) {
-      result = `${(p1.score > p2.score ? p1 : p2).name} wins!`;
-    }
+    const winner = p1.score === p2.score ? null : (p1.score > p2.score ? p1 : p2);
+    if (winner) result = `${winner.name} wins!`;
     this.add.rectangle(c.width / 2, c.height / 2, 480, 210, 0x0a1120, 0.95);
     this.add.text(c.width / 2, c.height / 2,
       `${reason}\nP1: ${p1.score} coins   P2: ${p2.score} coins\n${result}\nPress R to play again`,
       { font: '24px monospace', color: '#ffffff', align: 'center', lineSpacing: 12 }
     ).setOrigin(0.5);
+    features().forEach(f => f.finished && f.finished(this, { reason, allOut, winner }));
   }
 }
 window.coinDashGame = new Phaser.Game({
