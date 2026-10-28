@@ -43,6 +43,8 @@ laptops' JSON files together and save the combined HTML. Use the same time windo
 - `style.css`: page appearance.
 - `settings.js`: round duration, speeds, colours and dimensions.
 - `game.js`: scene, input, collisions, score and end-of-round behaviour.
+- `upgraded/`: the upgraded game (open `upgraded/index.html`): the two-player game plus random
+  Drone Curses (random effects) instead of knock-outs, a 2-minute round, and extra drones joining over time.
 - `vendor/phaser-3.90.0.min.js`: the pinned Phaser runtime, byte for byte the file published at
   `https://cdn.jsdelivr.net/npm/phaser@3.90.0/dist/phaser.min.js`; `vendor/LICENSE.phaser.txt` is its MIT licence.
 
