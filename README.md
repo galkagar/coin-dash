@@ -3,6 +3,10 @@
 Collect coins, avoid drones, and survive a 45-second round. Move with arrow keys or WASD;
 press R to restart. This is deliberately small so you can add features during the lab.
 
+Every 8–12 seconds an environment event hits the player (never the drones) for 5 seconds:
+**ICE!** makes you slide with momentum, and **FLOOR COLLAPSING!** turns the cells you leave into
+holes — step onto one and you fall through. Event tuning lives in `settings.js`.
+
 **Play it here:** https://www.avivz.net/coin-dash/
 
 ## Run it locally
