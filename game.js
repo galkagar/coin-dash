@@ -35,7 +35,7 @@ class CoinDash extends Phaser.Scene {
         p.score++;
         this.placeCoin();
       });
-      this.physics.add.overlap(p, this.drones, () => this.finish(p));
+      this.physics.add.overlap(p, this.drones, () => this.knockOut(p));
     }
     const [p1, p2] = this.players;
     this.physics.add.collider(p1, p2, () => this.shove(p1, p2));
@@ -47,8 +47,18 @@ class CoinDash extends Phaser.Scene {
     const p = this.add.rectangle(x, COIN_DASH.height / 2, 24, 24, color);
     this.physics.add.existing(p);
     p.body.setCollideWorldBounds(true);
-    Object.assign(p, { name, keys, score: 0, stunnedUntil: 0, move: new Phaser.Math.Vector2() });
+    Object.assign(p, { name, keys, score: 0, out: false, stunnedUntil: 0, move: new Phaser.Math.Vector2() });
     return p;
+  }
+
+  knockOut(p) {
+    // A caught player keeps their coins but leaves play; the round goes on for the others.
+    if (this.finished || p.out) return;
+    p.out = true;
+    p.body.stop();
+    p.body.enable = false;
+    p.setAlpha(0.25);
+    if (this.players.every(q => q.out)) this.finish(true);
   }
 
   shove(a, b) {
@@ -77,6 +87,7 @@ class CoinDash extends Phaser.Scene {
   update() {
     if (this.finished) return;
     for (const p of this.players) {
+      if (p.out) continue;
       const k = p.keys;
       p.move.set(Number(k.right.isDown) - Number(k.left.isDown),
         Number(k.down.isDown) - Number(k.up.isDown)).normalize();
@@ -86,22 +97,21 @@ class CoinDash extends Phaser.Scene {
     }
     const seconds = Math.max(0, Math.ceil((this.deadline - this.time.now) / 1000));
     const [p1, p2] = this.players;
-    this.hud.setText(`P1: ${p1.score}   P2: ${p2.score}               Time: ${seconds}s`);
-    if (seconds === 0) this.finish(null);
+    const tag = p => `${p.score}${p.out ? ' (out)' : ''}`;
+    this.hud.setText(`P1: ${tag(p1)}   P2: ${tag(p2)}               Time: ${seconds}s`);
+    if (seconds === 0) this.finish(false);
   }
 
-  finish(caught) {
+  finish(allCaught) {
     if (this.finished) return;
     this.finished = true;
     this.physics.pause();
     const c = COIN_DASH;
     const [p1, p2] = this.players;
-    // A caught player loses outright; on time-up the higher score wins.
-    let reason = 'Time is up!', result = 'It\'s a tie!';
-    if (caught) {
-      reason = `A drone caught ${caught.name}!`;
-      result = `${(caught === p1 ? p2 : p1).name} wins!`;
-    } else if (p1.score !== p2.score) {
+    // The round ends when every player is caught or time runs out; the higher score wins.
+    const reason = allCaught ? 'The drones caught everyone!' : 'Time is up!';
+    let result = 'It\'s a tie!';
+    if (p1.score !== p2.score) {
       result = `${(p1.score > p2.score ? p1 : p2).name} wins!`;
     }
     this.add.rectangle(c.width / 2, c.height / 2, 480, 210, 0x0a1120, 0.95);
