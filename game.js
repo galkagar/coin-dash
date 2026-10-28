@@ -2,6 +2,12 @@
 class CoinDash extends Phaser.Scene {
   constructor() { super('CoinDash'); }
 
+  preload() {
+    for (const [key, uri] of Object.entries(COIN_DASH_ICONS)) {
+      if (!this.textures.exists(key)) this.load.image(key, uri);
+    }
+  }
+
   create() {
     const c = COIN_DASH;
     this.finished = false;
@@ -11,12 +17,17 @@ class CoinDash extends Phaser.Scene {
       c.colors.background, 1, 0x24334b, 0.45).setDepth(-2);
     this.hud = this.add.text(18, 12, '', { font: '18px monospace', color: '#ffffff' });
     this.createEvents();
+    // Faces are drawn over the (hidden) physics rectangles after physics has moved them.
+    this.skinned = [];
+    const syncSkins = () => this.skinned.forEach(o => o.skin.forEach(s => s.setPosition(o.x, o.y).setAlpha(o.alpha)));
+    this.events.on('postupdate', syncSkins);
+    this.events.once('shutdown', () => this.events.off('postupdate', syncSkins));
     // Player 1 uses WASD, Player 2 the arrow keys; they start either side of centre.
     const cursors = this.input.keyboard.createCursorKeys();
     const wasd = this.input.keyboard.addKeys({ up: 'W', left: 'A', down: 'S', right: 'D' });
     this.players = [
-      this.makePlayer('Player 1', c.width / 2 - 120, c.colors.player, wasd),
-      this.makePlayer('Player 2', c.width / 2 + 120, c.colors.player2, cursors)
+      this.makePlayer('Player 1', c.width / 2 - 120, c.colors.player, wasd, 'player1'),
+      this.makePlayer('Player 2', c.width / 2 + 120, c.colors.player2, cursors, 'player2')
     ];
     this.coin = this.add.circle(100, 100, 9, c.colors.coin);
     this.physics.add.existing(this.coin);
@@ -24,7 +35,8 @@ class CoinDash extends Phaser.Scene {
     this.placeCoin();
     this.drones = this.physics.add.group();
     for (let i = 0; i < c.droneCount; i++) {
-      const drone = this.add.rectangle(90 + i * 270, 100, 26, 26, c.colors.drone);
+      const drone = this.add.rectangle(90 + i * 270, 100, c.droneSize, c.droneSize, c.colors.drone);
+      this.addSkin(drone, 'enemy', c.colors.drone);
       this.drones.add(drone);
       drone.body.setCollideWorldBounds(true).setBounce(1, 1);
       const angle = (35 + i * 105) * Math.PI / 180;
@@ -44,13 +56,24 @@ class CoinDash extends Phaser.Scene {
     this.input.keyboard.on('keydown-R', () => this.scene.restart());
   }
 
-  makePlayer(name, x, color, keys) {
-    const p = this.add.rectangle(x, COIN_DASH.height / 2, 24, 24, color);
+  makePlayer(name, x, color, keys, face) {
+    const size = COIN_DASH.playerSize;
+    const p = this.add.rectangle(x, COIN_DASH.height / 2, size, size, color);
+    this.addSkin(p, face, color);
     this.physics.add.existing(p);
     p.body.setCollideWorldBounds(true);
     Object.assign(p, { name, keys, score: 0, out: false, stunnedUntil: 0, floorCell: null,
       move: new Phaser.Math.Vector2() });
     return p;
+  }
+
+  // A coloured ring with the photo inside it; the rectangle stays as the hitbox.
+  addSkin(obj, face, color) {
+    const ring = this.add.circle(obj.x, obj.y, obj.width / 2, color);
+    const img = this.add.image(obj.x, obj.y, face).setDisplaySize(obj.width - 6, obj.width - 6);
+    obj.setVisible(false);
+    obj.skin = [ring, img];
+    this.skinned.push(obj);
   }
 
   active() { return this.players.filter(p => !p.out); }
