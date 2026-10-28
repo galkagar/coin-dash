@@ -8,8 +8,9 @@ class CoinDash extends Phaser.Scene {
     this.deadline = this.time.now + c.roundSeconds * 1000;
     this.physics.world.setBounds(0, 44, c.width, c.height - 44);
     this.add.grid(c.width / 2, c.height / 2, c.width, c.height, 40, 40,
-      c.colors.background, 1, 0x24334b, 0.45);
+      c.colors.background, 1, 0x24334b, 0.45).setDepth(-2);
     this.hud = this.add.text(18, 12, '', { font: '18px monospace', color: '#ffffff' });
+    this.createEvents();
     // Player 1 uses WASD, Player 2 the arrow keys; they start either side of centre.
     const cursors = this.input.keyboard.createCursorKeys();
     const wasd = this.input.keyboard.addKeys({ up: 'W', left: 'A', down: 'S', right: 'D' });
@@ -47,12 +48,15 @@ class CoinDash extends Phaser.Scene {
     const p = this.add.rectangle(x, COIN_DASH.height / 2, 24, 24, color);
     this.physics.add.existing(p);
     p.body.setCollideWorldBounds(true);
-    Object.assign(p, { name, keys, score: 0, out: false, stunnedUntil: 0, move: new Phaser.Math.Vector2() });
+    Object.assign(p, { name, keys, score: 0, out: false, stunnedUntil: 0, floorCell: null,
+      move: new Phaser.Math.Vector2() });
     return p;
   }
 
+  active() { return this.players.filter(p => !p.out); }
+
   knockOut(p) {
-    // A caught player keeps their coins but leaves play; the round goes on for the others.
+    // A caught or fallen player keeps their coins but leaves play; the round goes on for the others.
     if (this.finished || p.out) return;
     p.out = true;
     p.body.stop();
@@ -72,44 +76,142 @@ class CoinDash extends Phaser.Scene {
     victim.body.setVelocity(away.x * COIN_DASH.pushSpeed, away.y * COIN_DASH.pushSpeed);
   }
 
+  // Environment events change the floor physics for the players only; drones are never affected.
+  createEvents() {
+    const c = COIN_DASH;
+    this.event = null;
+    this.holes = new Map(); // 'col,row' -> { rect, open }
+    this.iceOverlay = this.add.rectangle(c.width / 2, (c.height + 44) / 2, c.width, c.height - 44,
+      c.colors.ice, 0.22).setDepth(-1).setVisible(false);
+    this.eventHud = this.add.text(c.width - 18, 12, '', { font: '18px monospace', color: '#cdeeff' })
+      .setOrigin(1, 0);
+    this.banner = this.add.text(c.width / 2, c.height / 2 - 80, '',
+      { font: 'bold 34px monospace', color: '#ffffff', stroke: '#000000', strokeThickness: 5 })
+      .setOrigin(0.5).setDepth(2).setVisible(false);
+    this.time.delayedCall(c.events.first, () => this.announceEvent());
+  }
+
+  announceEvent() {
+    if (this.finished) return;
+    const type = Phaser.Utils.Array.GetRandom(['ice', 'collapse']);
+    this.banner.setText(type === 'ice' ? 'ICE!' : 'FLOOR COLLAPSING!').setVisible(true);
+    this.time.delayedCall(COIN_DASH.events.warning, () => {
+      this.banner.setVisible(false);
+      this.startEvent(type);
+    });
+  }
+
+  startEvent(type) {
+    if (this.finished) return;
+    this.event = { type, ends: this.time.now + COIN_DASH.events.duration };
+    this.iceOverlay.setVisible(type === 'ice');
+    for (const p of this.players) p.floorCell = null;
+    this.time.delayedCall(COIN_DASH.events.duration, () => this.endEvent());
+  }
+
+  endEvent() {
+    if (this.finished) return;
+    for (const p of this.players) {
+      p.body.setAcceleration(0, 0).setDrag(0, 0).setMaxVelocity(10000, 10000); // Arcade defaults
+    }
+    this.iceOverlay.setVisible(false);
+    for (const hole of this.holes.values()) { this.tweens.killTweensOf(hole.rect); hole.rect.destroy(); }
+    this.holes.clear();
+    this.event = null;
+    const e = COIN_DASH.events;
+    this.time.delayedCall(Phaser.Math.Between(e.gapMin, e.gapMax), () => this.announceEvent());
+  }
+
+  // Normal control sets velocity directly; on ice input only accelerates and momentum carries on.
+  steer(player) {
+    const c = COIN_DASH, direction = player.move;
+    if (this.event && this.event.type === 'ice') {
+      player.body.setMaxVelocity(c.ice.maxSpeed).setDrag(c.ice.drag)
+        .setAcceleration(direction.x * c.ice.acceleration, direction.y * c.ice.acceleration);
+    } else {
+      player.body.setVelocity(direction.x * c.playerSpeed, direction.y * c.playerSpeed);
+    }
+  }
+
+  cellKey(x, y) { return `${Math.floor(x / 40)},${Math.floor(y / 40)}`; }
+
+  isHole(x, y) { return this.holes.has(this.cellKey(x, y)); } // cracking cells count too
+
+  // While the floor collapses, every cell a player leaves cracks and then opens into a hole.
+  trackFloor(player) {
+    if (!this.event || this.event.type !== 'collapse') return;
+    const key = this.cellKey(player.x, player.y);
+    const hole = this.holes.get(key);
+    if (hole && hole.open) return this.knockOut(player);
+    if (player.floorCell && player.floorCell !== key) this.crackCell(player.floorCell);
+    player.floorCell = key;
+  }
+
+  crackCell(key) {
+    if (this.holes.has(key)) return;
+    const c = COIN_DASH;
+    const [col, row] = key.split(',').map(Number);
+    const rect = this.add.rectangle(col * 40 + 20, row * 40 + 20, 40, 40, c.colors.crack, 0.8)
+      .setDepth(-1);
+    const hole = { rect, open: false };
+    this.holes.set(key, hole);
+    this.tweens.add({ targets: rect, alpha: 0.25, duration: c.collapse.crackDelay / 4, yoyo: true, repeat: 1 });
+    const open = () => {
+      if (this.finished || this.holes.get(key) !== hole) return;
+      // Never open a hole right under a player: wait until everyone has stepped off.
+      if (this.active().some(p => this.cellKey(p.x, p.y) === key)) {
+        return this.time.delayedCall(c.collapse.crackDelay, open);
+      }
+      this.tweens.killTweensOf(rect);
+      rect.setFillStyle(c.colors.hole, 1).setAlpha(1);
+      hole.open = true;
+      if (this.cellKey(this.coin.x, this.coin.y) === key) this.placeCoin();
+    };
+    this.time.delayedCall(c.collapse.crackDelay, open);
+  }
+
   placeCoin() {
     const c = COIN_DASH;
-    // Avoid spawning the next coin directly underneath either player.
+    // Avoid spawning the next coin directly underneath either player, or in a hole.
     let x, y;
     do {
       x = Phaser.Math.Between(25, c.width - 25);
       y = Phaser.Math.Between(70, c.height - 25);
-    } while (this.players.some(p => Phaser.Math.Distance.Between(x, y, p.x, p.y) < 60));
+    } while (this.players.some(p => Phaser.Math.Distance.Between(x, y, p.x, p.y) < 60)
+      || this.isHole(x, y));
     this.coin.setPosition(x, y);
     this.coin.body.reset(x, y);
   }
 
   update() {
     if (this.finished) return;
-    for (const p of this.players) {
-      if (p.out) continue;
+    for (const p of this.active()) {
       const k = p.keys;
       p.move.set(Number(k.right.isDown) - Number(k.left.isDown),
         Number(k.down.isDown) - Number(k.up.isDown)).normalize();
       // A shoved player keeps their knockback velocity until the stun wears off.
-      if (p.stunnedUntil > this.time.now) continue;
-      p.body.setVelocity(p.move.x * COIN_DASH.playerSpeed, p.move.y * COIN_DASH.playerSpeed);
+      if (p.stunnedUntil <= this.time.now) this.steer(p);
+      this.trackFloor(p);
     }
+    if (this.finished) return;
     const seconds = Math.max(0, Math.ceil((this.deadline - this.time.now) / 1000));
     const [p1, p2] = this.players;
     const tag = p => `${p.score}${p.out ? ' (out)' : ''}`;
-    this.hud.setText(`P1: ${tag(p1)}   P2: ${tag(p2)}               Time: ${seconds}s`);
+    this.hud.setText(`P1: ${tag(p1)}   P2: ${tag(p2)}`);
+    this.eventHud.setText((this.event ? `${this.event.type === 'ice' ? 'ICE' : 'COLLAPSE'} `
+      + `${Math.max(0, Math.ceil((this.event.ends - this.time.now) / 1000))}s   ` : '')
+      + `Time: ${seconds}s`);
     if (seconds === 0) this.finish(false);
   }
 
-  finish(allCaught) {
+  finish(allOut) {
     if (this.finished) return;
     this.finished = true;
     this.physics.pause();
     const c = COIN_DASH;
     const [p1, p2] = this.players;
-    // The round ends when every player is caught or time runs out; the higher score wins.
-    const reason = allCaught ? 'The drones caught everyone!' : 'Time is up!';
+    // The round ends when every player is out or time runs out; the higher score wins.
+    const reason = allOut ? 'Everyone is out!' : 'Time is up!';
     let result = 'It\'s a tie!';
     if (p1.score !== p2.score) {
       result = `${(p1.score > p2.score ? p1 : p2).name} wins!`;

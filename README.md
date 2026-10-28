@@ -4,6 +4,10 @@ Two players race for coins and dodge drones in a 45-second round. Player 1 (teal
 Player 2 (purple) with the arrow keys; run into your rival to shove them. A player caught by a drone is out but keeps their coins;
 the round ends when everyone is out or time runs out, and the higher score wins. Press R to restart. This is deliberately small so you can add features during the lab.
 
+Every 8–12 seconds an environment event hits the players (never the drones) for 5 seconds:
+**ICE!** makes you slide with momentum, and **FLOOR COLLAPSING!** turns the cells you leave into
+holes — step onto one and you fall through and are out. Event tuning lives in `settings.js`.
+
 **Play it here:** https://www.avivz.net/coin-dash/
 
 ## Run it locally
