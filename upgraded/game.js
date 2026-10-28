@@ -1,7 +1,7 @@
 /* global Phaser, COIN_DASH */
-// A drone hit applies one of these to the player for a few seconds. Darkness and the runaway
+// Drone curses: a drone hit applies one of these to the player for a few seconds. Darkness and the runaway
 // coin change the shared arena, so they affect both players.
-const PENALTIES = {
+const CURSES = {
   slow: 'SLOWED',
   freeze: 'FROZEN',
   shrink: 'SHRUNK',
@@ -68,10 +68,10 @@ class CoinDash extends Phaser.Scene {
     const p = this.add.rectangle(x, COIN_DASH.height / 2, 24, 24, color);
     this.physics.add.existing(p);
     p.body.setCollideWorldBounds(true);
-    // penaltyEnds holds the time each penalty wears off; 0 means inactive.
+    // curseEnds holds the time each curse wears off; 0 means inactive.
     Object.assign(p, { name, color, keys, score: 0, out: false, stunnedUntil: 0, floorCell: null,
       move: new Phaser.Math.Vector2(), invulnerableUntil: 0,
-      penaltyEnds: Object.fromEntries(Object.keys(PENALTIES).map((k) => [k, 0])) });
+      curseEnds: Object.fromEntries(Object.keys(CURSES).map((k) => [k, 0])) });
     p.statusText = this.add.text(x, p.y, '', { font: 'bold 11px monospace', color: '#ff9aa8' })
       .setOrigin(0.5, 0).setDepth(DEPTH.hud);
     return p;
@@ -81,10 +81,10 @@ class CoinDash extends Phaser.Scene {
 
   totalScore() { return this.players.reduce((sum, p) => sum + p.score, 0); }
 
-  has(p, penalty) { return this.time.now < p.penaltyEnds[penalty]; }
+  has(p, curse) { return this.time.now < p.curseEnds[curse]; }
 
-  // Arena-wide penalties are on while any player still has them.
-  anyHas(penalty) { return this.players.some(p => this.has(p, penalty)); }
+  // Arena-wide curses are on while any player still has them.
+  anyHas(curse) { return this.players.some(p => this.has(p, curse)); }
 
   knockOut(p) {
     // A player who falls through the floor keeps their coins but leaves play; the round goes on for the others.
@@ -94,21 +94,21 @@ class CoinDash extends Phaser.Scene {
     p.body.enable = false;
     p.setAlpha(0.25);
     p.statusText.setText('');
-    for (const k of Object.keys(p.penaltyEnds)) p.penaltyEnds[k] = 0;
+    for (const k of Object.keys(p.curseEnds)) p.curseEnds[k] = 0;
     if (this.players.every(q => q.out)) this.finish(true);
   }
 
   hitDrone(p) {
-    // Drones no longer knock players out: each hit applies one random penalty instead.
+    // Drones no longer knock players out: each hit applies one random drone curse instead.
     if (this.finished || p.out || this.time.now < p.invulnerableUntil) return;
     const c = COIN_DASH;
-    const penalty = Phaser.Utils.Array.GetRandom(Object.keys(PENALTIES));
-    const seconds = penalty === 'freeze' ? c.freezeSeconds : c.penaltySeconds;
-    p.penaltyEnds[penalty] = this.time.now + seconds * 1000;
+    const curse = Phaser.Utils.Array.GetRandom(Object.keys(CURSES));
+    const seconds = curse === 'freeze' ? c.freezeSeconds : c.curseSeconds;
+    p.curseEnds[curse] = this.time.now + seconds * 1000;
     p.invulnerableUntil = this.time.now + c.hitCooldownSeconds * 1000;
-    if (penalty === 'runaway') this.launchCoin();
+    if (curse === 'runaway') this.launchCoin();
     this.cameras.main.shake(150, 0.008);
-    const label = this.add.text(p.x, p.y - 24, `${PENALTIES[penalty]}!`,
+    const label = this.add.text(p.x, p.y - 24, `${CURSES[curse]}!`,
       { font: 'bold 18px monospace', color: '#ff657a' }).setOrigin(0.5).setDepth(DEPTH.hud);
     this.tweens.add({ targets: label, y: label.y - 30, alpha: 0, duration: 900,
       onComplete: () => label.destroy() });
@@ -273,7 +273,7 @@ class CoinDash extends Phaser.Scene {
     this.coin.body.setVelocity(Math.cos(angle) * speed, Math.sin(angle) * speed);
   }
 
-  // Drones home in on the nearest player who has the chase penalty.
+  // Drones home in on the nearest player who has the chase curse.
   chaseDrones() {
     const targets = this.active().filter(p => this.has(p, 'chase'));
     if (targets.length === 0) return;
@@ -301,8 +301,8 @@ class CoinDash extends Phaser.Scene {
     // Blink during the grace period after a hit.
     p.setAlpha(this.time.now < p.invulnerableUntil
       ? (Math.floor(this.time.now / 100) % 2 ? 0.3 : 1) : 1);
-    const active = Object.keys(PENALTIES).filter(k => this.has(p, k))
-      .map(k => `${PENALTIES[k]} ${Math.ceil((p.penaltyEnds[k] - this.time.now) / 1000)}s`);
+    const active = Object.keys(CURSES).filter(k => this.has(p, k))
+      .map(k => `${CURSES[k]} ${Math.ceil((p.curseEnds[k] - this.time.now) / 1000)}s`);
     p.statusText.setText(active.join('\n')).setPosition(p.x, p.y + 16);
   }
 

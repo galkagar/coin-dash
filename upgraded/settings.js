@@ -13,8 +13,8 @@ window.COIN_DASH = {
   extraDroneSafeDistance: 150,
   pushSpeed: 420, // knockback speed when one player shoves the other
   pushMs: 200, // how long a shoved player's input is ignored
-  // Penalties for touching a drone: each hit applies one random penalty for a few seconds.
-  penaltySeconds: 3,
+  // Drone curses: each drone hit applies one random curse for a few seconds.
+  curseSeconds: 3,
   freezeSeconds: 1.5,
   hitCooldownSeconds: 1.5, // grace period after a hit, so one touch counts once
   slowFactor: 0.4,
