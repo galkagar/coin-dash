@@ -6,6 +6,8 @@ window.COIN_DASH = {
   playerSpeed: 240,
   droneSpeed: 105,
   droneCount: 3,
+  playerSize: 32, // players and drones are drawn as round photo faces with a coloured ring
+  droneSize: 32,
   pushSpeed: 420, // knockback speed when one player shoves the other
   pushMs: 200, // how long a shoved player's input is ignored
   // Environment events (times in ms): one at a time, warned before it starts, players only.
